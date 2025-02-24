@@ -12,6 +12,7 @@ require 'net/http'
 class ProductPageRecorder
   def initialize
     configure_vcr
+    @recorded_interactions = []
   end
 
   def record_page(url)
@@ -26,16 +27,9 @@ class ProductPageRecorder
     # Ensure directory exists
     FileUtils.mkdir_p(File.join('vcr_cassettes', host_dir))
     
-    # Record the main page request first
-    VCR.use_cassette(cassette_name, record: :new_episodes) do
-      begin
-        # Make a direct request to get the main page
-        response = Net::HTTP.get_response(uri)
-        puts "Recorded main page response: #{response.code}"
-      rescue => e
-        puts "Warning: Failed to record main page: #{e.message}"
-      end
-      
+    # Record all requests in a single cassette
+    VCR.turned_off do
+      WebMock.allow_net_connect!
       browser = nil
       begin
         # Launch browser with mobile configuration
@@ -71,13 +65,58 @@ class ProductPageRecorder
         # Set mobile user agent
         page.set_user_agent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1')
         
+        # Track pending requests
+        pending_requests = {}
+        
         # Listen to all network requests
         page.on('request') do |request|
           puts "Request: #{request.url}"
+          pending_requests[request.url] = {
+            method: request.method,
+            headers: request.headers,
+            body: request.post_data
+          }
         end
         
         page.on('response') do |response|
-          puts "Response: #{response.url} (#{response.status})"
+          url = response.url
+          puts "Response: #{url} (#{response.status})"
+          
+          # Get response body as text, fallback to buffer for binary data
+          response.text.then do |body|
+            body ||= response.buffer.then { |buf| Base64.strict_encode64(buf) } rescue ''
+            
+            request_data = pending_requests.delete(url) || {}
+            headers = response.headers
+            
+            interaction = {
+              request: {
+                method: request_data[:method] || 'GET',
+                uri: url,
+                body: {
+                  encoding: 'UTF-8',
+                  string: request_data[:body].to_s
+                },
+                headers: request_data[:headers] || {}
+              },
+              response: {
+                status: {
+                  code: response.status,
+                  message: response.status_text
+                },
+                headers: headers,
+                body: {
+                  encoding: 'UTF-8',
+                  string: body
+                }
+              },
+              recorded_at: Time.now.utc
+            }
+            
+            @recorded_interactions << interaction
+          rescue => e
+            puts "Error recording response: #{e.message}"
+          end
         end
         
         # Set default timeout
@@ -100,8 +139,8 @@ class ProductPageRecorder
           # Wait for a common element that indicates the main content is loaded
           page.wait_for_selector('main, #main, .main, [role="main"], .product-title, .product-details', timeout: 10000)
           
-          # Give extra time for dynamic content
-          sleep 2
+          # Give extra time for dynamic content and pending requests to complete
+          sleep 5
         rescue => e
           puts "Warning: Timeout waiting for page content: #{e.message}"
         end
@@ -112,6 +151,13 @@ class ProductPageRecorder
           browser.close
         end
       end
+      
+      # Save recorded interactions to cassette
+      cassette_path = File.join('vcr_cassettes', "#{cassette_name}.yml")
+      File.write(cassette_path, {
+        'http_interactions' => @recorded_interactions,
+        'recorded_with' => 'VCR 6.1.0'
+      }.to_yaml)
     end
     
     puts "Finished recording to cassette: #{cassette_name}"
@@ -124,61 +170,6 @@ class ProductPageRecorder
       config.cassette_library_dir = "vcr_cassettes"
       config.hook_into :webmock
       config.allow_http_connections_when_no_cassette = true
-      
-      # Preserve exact body bytes to handle binary responses correctly
-      config.preserve_exact_body_bytes do |http_message|
-        http_message.body.encoding.name == 'ASCII-8BIT' ||
-        !http_message.body.valid_encoding?
-      end
-      
-      # Record all requests including those from Puppeteer
-      config.before_record do |interaction|
-        content_type = interaction.response.headers['content-type']&.first&.downcase
-        
-        if interaction.response.body.encoding == Encoding::ASCII_8BIT
-          # Try to handle common formats based on content type
-          case content_type
-          when /^text/, /json/, /javascript/, /xml/, /html/, /application\/json/
-            # For text-based formats, try to decode as UTF-8
-            begin
-              interaction.response.body.force_encoding('UTF-8')
-              unless interaction.response.body.valid_encoding?
-                interaction.response.body = interaction.response.body.encode('UTF-8', 'UTF-8', invalid: :replace, undef: :replace)
-              end
-            rescue => e
-              puts "Warning: Failed to decode as UTF-8: #{e.message}"
-              interaction.response.body = Base64.strict_encode64(interaction.response.body)
-              interaction.response.headers['x-encoding'] = ['base64']
-            end
-          when /^image/, /^audio/, /^video/, /^application\/pdf/, /^application\/zip/, /octet-stream/
-            # For binary content, store content type and use base64
-            interaction.response.body = Base64.strict_encode64(interaction.response.body)
-            interaction.response.headers['x-encoding'] = ['base64']
-            interaction.response.headers['x-original-content-type'] = [content_type]
-          else
-            # For unknown types, try UTF-8 first
-            begin
-              interaction.response.body.force_encoding('UTF-8')
-              if !interaction.response.body.valid_encoding?
-                interaction.response.body = Base64.strict_encode64(interaction.response.body)
-                interaction.response.headers['x-encoding'] = ['base64']
-                puts "Warning: Unknown content type #{content_type} - using base64"
-              end
-            rescue => e
-              interaction.response.body = Base64.strict_encode64(interaction.response.body)
-              interaction.response.headers['x-encoding'] = ['base64']
-              puts "Warning: Failed to handle content type #{content_type}: #{e.message}"
-            end
-          end
-        end
-      end
-      
-      # Configure VCR to record all requests including those from Puppeteer
-      config.ignore_request do |request|
-        false # Don't ignore any requests
-      end
-      
-      # Debug logging
       config.debug_logger = File.open('vcr.log', 'w')
     end
   end
