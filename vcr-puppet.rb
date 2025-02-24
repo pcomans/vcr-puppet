@@ -8,6 +8,27 @@ require 'digest'
 require 'base64'
 require 'json'
 require 'net/http'
+require 'logger'
+
+# Initialize logger
+LOGGER = Logger.new('vcr.log')
+LOGGER.level = Logger::DEBUG
+
+TIMEOUT_PAGE_LOAD = 30000
+TIMEOUT_SELECTOR_BODY = 5000
+TIMEOUT_SELECTOR_MAIN = 10000
+PUPPETEER_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-accelerated-2d-canvas',
+  '--disable-gpu',
+  '--disable-features=site-per-process',
+  '--disable-blink-features=AutomationControlled',
+  '--enable-mobile-emulation',
+  '--enable-touch-events',
+  '--enable-viewport'
+]
 
 class ProductPageRecorder
   def initialize
@@ -17,12 +38,14 @@ class ProductPageRecorder
 
   def record_page(url)
     puts "Recording page: #{url}"
+    LOGGER.info("Recording page: #{url}")
     
     # Create a filesystem-friendly cassette name
     uri = URI(url)
     host_dir = uri.host.gsub('.', '_')
     cassette_name = "#{host_dir}/#{Digest::SHA256.hexdigest(url)}"
     puts "Cassette: #{cassette_name}"
+    LOGGER.info("Cassette: #{cassette_name}")
     
     # Ensure directory exists
     FileUtils.mkdir_p(File.join('vcr_cassettes', host_dir))
@@ -35,19 +58,7 @@ class ProductPageRecorder
         # Launch browser with mobile configuration
         browser = Puppeteer.launch(
           headless: false,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--disable-gpu',
-            '--disable-features=site-per-process',
-            '--disable-blink-features=AutomationControlled',
-            # Mobile emulation
-            '--enable-mobile-emulation',
-            '--enable-touch-events',
-            '--enable-viewport'
-          ]
+          args: PUPPETEER_ARGS
         )
         
         context = browser.create_incognito_browser_context
@@ -71,7 +82,8 @@ class ProductPageRecorder
         # Listen to all network requests
         page.on('request') do |request|
           puts "Request: #{request.url}"
-          pending_requests[request.url] = {
+          LOGGER.debug("Request: #{request.url}")
+          pending_requests["#{request.url}-#{Time.now.to_f}"] = {
             method: request.method,
             headers: request.headers,
             body: request.post_data
@@ -81,6 +93,7 @@ class ProductPageRecorder
         page.on('response') do |response|
           url = response.url
           puts "Response: #{url} (#{response.status})"
+          LOGGER.debug("Response: #{url} (#{response.status})")
           
           # Get response body as text, fallback to buffer for binary data
           response.text.then do |body|
@@ -115,38 +128,44 @@ class ProductPageRecorder
             
             @recorded_interactions << interaction
           rescue => e
-            puts "Error recording response: #{e.message}"
+            puts "Error recording response for URL #{url}: #{e.message}"
+            LOGGER.error("Error recording response for URL #{url}: #{e.message}")
           end
         end
         
         # Set default timeout
-        page.default_timeout = 30000
+        page.default_timeout = TIMEOUT_PAGE_LOAD
         
         # Wait for page load with navigation options
         puts "Loading page..."
+        LOGGER.info("Loading page...")
         response = page.goto(url, 
           wait_until: 'networkidle0',
-          timeout: 30000
+          timeout: TIMEOUT_PAGE_LOAD
         )
         puts "Page loaded with status: #{response.status}"
+        LOGGER.info("Page loaded with status: #{response.status}")
         
         # Wait for network to settle by waiting for key elements
         puts "Waiting for page content to load..."
+        LOGGER.info("Waiting for page content to load...")
         begin
           # Wait for body element to ensure basic page structure is loaded
-          page.wait_for_selector('body', timeout: 5000)
+          page.wait_for_selector('body', timeout: TIMEOUT_SELECTOR_BODY)
           
           # Wait for a common element that indicates the main content is loaded
-          page.wait_for_selector('main, #main, .main, [role="main"], .product-title, .product-details', timeout: 10000)
+          page.wait_for_selector('main, #main, .main, [role="main"], .product-title, .product-details', timeout: TIMEOUT_SELECTOR_MAIN)
           
           # Give extra time for dynamic content and pending requests to complete
           sleep 5
         rescue => e
           puts "Warning: Timeout waiting for page content: #{e.message}"
+          LOGGER.warn("Timeout waiting for page content: #{e.message}")
         end
       ensure
         if browser
           puts "Closing browser..."
+          LOGGER.info("Closing browser...")
           context&.close
           browser.close
         end
@@ -161,6 +180,7 @@ class ProductPageRecorder
     end
     
     puts "Finished recording to cassette: #{cassette_name}"
+    LOGGER.info("Finished recording to cassette: #{cassette_name}")
   end
 
   private
