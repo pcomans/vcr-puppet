@@ -48,33 +48,47 @@ class ProductPageRecorder
             '--disable-accelerated-2d-canvas',
             '--disable-gpu',
             '--disable-features=site-per-process',
-            # Mobile-specific arguments
+            '--disable-blink-features=AutomationControlled',
+            # Mobile emulation
+            '--enable-mobile-emulation',
             '--enable-touch-events',
-            '--enable-viewport',
-            '--enable-mobile-emulation'
+            '--enable-viewport'
           ]
         )
         
         context = browser.create_incognito_browser_context
         page = context.new_page
         
-        # Set mobile viewport
+        # Configure mobile viewport
         page.viewport = Puppeteer::Viewport.new(
           width: 390,
           height: 844,
           device_scale_factor: 3,
-          is_mobile: true
+          is_mobile: true,
+          has_touch: true
         )
         
         # Set mobile user agent
         page.set_user_agent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1')
         
+        # Listen to all network requests
+        page.on('request') do |request|
+          puts "Request: #{request.url}"
+        end
+        
+        page.on('response') do |response|
+          puts "Response: #{response.url} (#{response.status})"
+        end
+        
         # Set default timeout
         page.default_timeout = 30000
         
-        # Wait for page load
+        # Wait for page load with navigation options
         puts "Loading page..."
-        response = page.goto(url)
+        response = page.goto(url, 
+          wait_until: 'networkidle0',
+          timeout: 30000
+        )
         puts "Page loaded with status: #{response.status}"
         
         # Wait for network to settle by waiting for key elements
@@ -84,18 +98,13 @@ class ProductPageRecorder
           page.wait_for_selector('body', timeout: 5000)
           
           # Wait for a common element that indicates the main content is loaded
-          # This could be the main content div, product title, etc.
-          page.wait_for_selector('main, #main, .main, [role="main"]', timeout: 10000)
+          page.wait_for_selector('main, #main, .main, [role="main"], .product-title, .product-details', timeout: 10000)
+          
+          # Give extra time for dynamic content
+          sleep 2
         rescue => e
           puts "Warning: Timeout waiting for page content: #{e.message}"
         end
-        
-        # Give a moment for any dynamic content
-        puts "Waiting for dynamic content..."
-        sleep 3
-        
-        puts "Recording network activity..."
-        sleep 2
       ensure
         if browser
           puts "Closing browser..."
@@ -116,7 +125,13 @@ class ProductPageRecorder
       config.hook_into :webmock
       config.allow_http_connections_when_no_cassette = true
       
-      # Handle binary responses
+      # Preserve exact body bytes to handle binary responses correctly
+      config.preserve_exact_body_bytes do |http_message|
+        http_message.body.encoding.name == 'ASCII-8BIT' ||
+        !http_message.body.valid_encoding?
+      end
+      
+      # Record all requests including those from Puppeteer
       config.before_record do |interaction|
         content_type = interaction.response.headers['content-type']&.first&.downcase
         
@@ -156,6 +171,11 @@ class ProductPageRecorder
             end
           end
         end
+      end
+      
+      # Configure VCR to record all requests including those from Puppeteer
+      config.ignore_request do |request|
+        false # Don't ignore any requests
       end
       
       # Debug logging
