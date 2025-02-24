@@ -79,8 +79,12 @@ class ProductPageRecorder
         # Track pending requests
         pending_requests = {}
         
-        # Listen to all network requests
+        # Filter out unnecessary requests (e.g., images, analytics)
         page.on('request') do |request|
+          if request.resource_type == 'image' || request.url.include?('analytics')
+            request.abort
+            next
+          end
           puts "Request: #{request.url}"
           LOGGER.debug("Request: #{request.url}")
           pending_requests["#{request.url}-#{Time.now.to_f}"] = {
@@ -126,7 +130,10 @@ class ProductPageRecorder
               recorded_at: Time.now.utc
             }
             
-            @recorded_interactions << interaction
+            # Check for duplicate interactions before adding
+            unless @recorded_interactions.any? { |i| i[:request][:uri] == url }
+              @recorded_interactions << interaction
+            end
           rescue => e
             puts "Error recording response for URL #{url}: #{e.message}"
             LOGGER.error("Error recording response for URL #{url}: #{e.message}")
