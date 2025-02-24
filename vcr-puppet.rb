@@ -38,25 +38,36 @@ class ProductPageRecorder
       
       browser = nil
       begin
-        # Launch browser with more stable configuration
+        # Launch browser with mobile configuration
         browser = Puppeteer.launch(
           headless: false,
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
-            '--window-size=1280,800',
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
             '--disable-gpu',
-            '--disable-features=site-per-process'
+            '--disable-features=site-per-process',
+            # Mobile-specific arguments
+            '--enable-touch-events',
+            '--enable-viewport',
+            '--enable-mobile-emulation'
           ]
         )
         
         context = browser.create_incognito_browser_context
         page = context.new_page
         
-        # Set a realistic user agent
-        page.set_user_agent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
+        # Set mobile viewport
+        page.viewport = Puppeteer::Viewport.new(
+          width: 390,
+          height: 844,
+          device_scale_factor: 3,
+          is_mobile: true
+        )
+        
+        # Set mobile user agent
+        page.set_user_agent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1')
         
         # Set default timeout
         page.default_timeout = 30000
