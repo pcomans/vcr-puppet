@@ -8,3 +8,4 @@ gem 'puppeteer-ruby', '~> 0.45'  # For browser automation
 # Utility gems
 gem 'fileutils', '~> 1.7'        # For file operations
 gem 'base64', '~> 0.2'           # For encoding binary content 
+gem "rubocop", "~> 1.50", :group => :development

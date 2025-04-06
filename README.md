@@ -21,16 +21,31 @@ A Ruby tool that combines VCR and Puppeteer to record web pages and their resour
 
 ## Installation
 
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd vcr-puppet
-   ```
+1. **Set up Ruby Version:** This project requires Ruby `3.4.2`. We recommend using `rbenv` to manage Ruby versions.
 
-2. Install dependencies:
-   ```bash
-   bundle install --path vendor/bundle
-   ```
+    ```bash
+    # Install rbenv (if you don't have it)
+    brew install rbenv
+
+    # Install the required Ruby version (if not already installed)
+    rbenv install $(cat .ruby-version)
+
+    # Set the local Ruby version for this project (reads from .ruby-version)
+    rbenv local $(cat .ruby-version)
+
+    # Verify the correct Ruby version is active
+    ruby -v
+    ```
+
+2. **Install Dependencies:** Use Bundler to install the required gems.
+
+    ```bash
+    # Install bundler if you haven't already (needed for the first time)
+    gem install bundler
+
+    # Install project gems
+    bundle install
+    ```
 
 ## Usage
 
