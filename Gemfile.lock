@@ -20,6 +20,8 @@ GEM
       logger
       mime-types-data (~> 3.2015)
     mime-types-data (3.2025.0402)
+    nokogiri (1.18.7-arm64-darwin)
+      racc (~> 1.4)
     parallel (1.26.3)
     parser (3.3.7.4)
       ast (~> 2.4.1)
@@ -65,11 +67,11 @@ GEM
 
 PLATFORMS
   arm64-darwin-24
-  ruby
 
 DEPENDENCIES
   base64 (~> 0.2)
   fileutils (~> 1.7)
+  nokogiri
   puppeteer-ruby (~> 0.45)
   rubocop (~> 1.50)
   vcr (~> 6.1)

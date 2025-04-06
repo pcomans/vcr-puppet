@@ -7,9 +7,18 @@ class ProductScraper
   PUPPETEER_ARGS = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
-    # Add other args from vcr-puppet.rb if necessary
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--disable-gpu',
+    '--disable-features=site-per-process',
+    '--disable-blink-features=AutomationControlled',
+    '--enable-mobile-emulation',
+    '--enable-touch-events',
+    '--enable-viewport'
   ]
   TIMEOUT_PAGE_LOAD = 30000 # Example timeout
+  TIMEOUT_SELECTOR_BODY = 5000
+  TIMEOUT_SELECTOR_MAIN = 10000
 
   def initialize(url)
     @url = url
@@ -33,22 +42,45 @@ class ProductScraper
     browser = nil
     html = nil
     begin
-      browser = Puppeteer.launch(headless: true, args: PUPPETEER_ARGS) # Headless is typical for scraping/testing
-      page = browser.new_page
+      browser = Puppeteer.launch(headless: false, args: PUPPETEER_ARGS)
+      context = browser.create_incognito_browser_context # Use incognito context
+      page = context.new_page
 
-      # Optional: Set user agent, viewport like in vcr-puppet.rb if needed for the target site
-      # page.set_user_agent(...)
-      # page.viewport = ...
+      # Set default timeout like in vcr-puppet.rb
+      page.default_timeout = TIMEOUT_PAGE_LOAD
+
+      # Configure mobile viewport
+      page.viewport = Puppeteer::Viewport.new(
+        width: 390,
+        height: 844,
+        device_scale_factor: 3,
+        is_mobile: true,
+        has_touch: true
+      )
+      # Set mobile user agent
+      page.set_user_agent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1')
 
       # Navigate and wait for rendering
-      # 'networkidle0' is often good, but might need adjustment per site
       page.goto(@url, wait_until: 'networkidle0', timeout: TIMEOUT_PAGE_LOAD)
 
-      # Maybe add specific waits like page.wait_for_selector(...) if needed
+      # Add explicit waits like in vcr-puppet.rb
+      begin
+        # Wait for body element
+        page.wait_for_selector('body', timeout: TIMEOUT_SELECTOR_BODY)
+        # Wait for main content element
+        page.wait_for_selector('main, #main, .main, [role="main"], .product-title, .product-details', timeout: TIMEOUT_SELECTOR_MAIN)
+        # Give extra time for dynamic content
+        sleep 5
+      rescue Puppeteer::TimeoutError => e
+        # Log warning or handle timeout for waits if necessary, but don't necessarily fail
+        puts "Warning: Timeout waiting for specific page elements after navigation: #{e.message}"
+      end
 
       # Get the final rendered HTML
       html = page.content
     ensure
+      # Close context then browser
+      context&.close
       browser&.close
     end
     html
